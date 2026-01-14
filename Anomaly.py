@@ -1,3 +1,8 @@
+# ---------------------------------------------------------
+# Exploratory Data Analysis (EDA) with Measure Aggregation
+# Aadhaar Enrolment + Demographic + Biometric
+# ---------------------------------------------------------
+
 import pandas as pd
 import numpy as np
 import glob
@@ -14,31 +19,21 @@ demographic_path = os.path.join(BASE_DIR, "api_data_aadhar_demographic")
 biometric_path = os.path.join(BASE_DIR, "api_data_aadhar_biometric")
 
 # --------------------------------------------------
-# LOAD FILES (RECURSIVE — IMPORTANT FIX)
+# LOAD FILES (RECURSIVE)
 # --------------------------------------------------
-enrolment_files = glob.glob(
-    os.path.join(enrolment_path, "**", "*.csv"),
-    recursive=True
-)
+def load_files(path):
+    return glob.glob(os.path.join(path, "**", "*.csv"), recursive=True)
 
-demographic_files = glob.glob(
-    os.path.join(demographic_path, "**", "*.csv"),
-    recursive=True
-)
-
-biometric_files = glob.glob(
-    os.path.join(biometric_path, "**", "*.csv"),
-    recursive=True
-)
+enrolment_files = load_files(enrolment_path)
+demographic_files = load_files(demographic_path)
+biometric_files = load_files(biometric_path)
 
 print("Enrolment files:", len(enrolment_files))
 print("Demographic files:", len(demographic_files))
 print("Biometric files:", len(biometric_files))
 
-print("Sample enrolment file:", enrolment_files[:1])
-
 if not enrolment_files or not demographic_files or not biometric_files:
-    raise ValueError("One or more folders contain no CSV files")
+    raise ValueError("One or more data folders are empty")
 
 # --------------------------------------------------
 # CONCATENATE DATA
@@ -48,10 +43,23 @@ df_demo  = pd.concat((pd.read_csv(f) for f in demographic_files), ignore_index=T
 df_bio   = pd.concat((pd.read_csv(f) for f in biometric_files), ignore_index=True)
 
 # --------------------------------------------------
-# DATE STANDARDIZATION
+# STANDARDIZE DATE
 # --------------------------------------------------
 for df in [df_enrol, df_demo, df_bio]:
     df["date"] = pd.to_datetime(df["date"], format="%d-%m-%Y")
+
+# --------------------------------------------------
+# IDENTIFY STATE COLUMN SAFELY
+# --------------------------------------------------
+def get_state_column(df):
+    for col in df.columns:
+        if col.lower() == "state":
+            return col
+    raise ValueError("State column not found")
+
+state_col_enrol = get_state_column(df_enrol)
+state_col_demo = get_state_column(df_demo)
+state_col_bio = get_state_column(df_bio)
 
 # --------------------------------------------------
 # ENROLMENT ANALYSIS
@@ -69,33 +77,10 @@ daily_enrol = (
 )
 
 # --------------------------------------------------
-# DEMOGRAPHIC ANALYSIS (FULLY SCHEMA-AGNOSTIC)
+# BIOMETRIC ANALYSIS
 # --------------------------------------------------
-
-exclude_cols = ["date", "state", "district"]
-
-numeric_cols = df_demo.select_dtypes(include="number").columns.tolist()
-numeric_cols = [c for c in numeric_cols if c not in exclude_cols]
-
-print("Demographic numeric columns:", numeric_cols)
-
-if not numeric_cols:
-    raise ValueError("No numeric demographic columns found")
-
-df_demo["total_population"] = df_demo[numeric_cols].sum(axis=1)
-
-district_demo = (
-    df_demo.groupby("district")["total_population"]
-    .sum()
-    .reset_index()
-)
-
-
-# --------------------------------------------------
-# BIOMETRIC ANALYSIS (SCHEMA-SAFE)
-# --------------------------------------------------
-exclude_cols = ["date", "state", "district"]
-bio_cols = [c for c in df_bio.columns if c not in exclude_cols]
+exclude_cols = ["date", state_col_bio, "district"]
+bio_cols = [c for c in df_bio.select_dtypes(include="number").columns if c not in exclude_cols]
 
 df_bio["total_biometric_updates"] = df_bio[bio_cols].sum(axis=1)
 
@@ -106,36 +91,37 @@ biometric_trends = (
 )
 
 # --------------------------------------------------
-# CROSS-DATASET MERGES
+# DEMOGRAPHIC ANALYSIS (SCHEMA-AGNOSTIC)
 # --------------------------------------------------
-combined_time = pd.merge(
-    daily_enrol,
-    biometric_trends,
-    on="date",
-    how="inner"
-)
+exclude_cols = ["date", state_col_demo, "district"]
+demo_cols = [c for c in df_demo.select_dtypes(include="number").columns if c not in exclude_cols]
 
-enrol_by_district = (
-    df_enrol.groupby("district")["total_enrolment"]
-    .sum()
-    .reset_index()
-)
-
-district_merge = enrol_by_district.merge(
-    district_demo,
-    on="district",
-    how="inner"
-)
+df_demo["total_population"] = df_demo[demo_cols].sum(axis=1)
 
 # --------------------------------------------------
-# FINAL CHECK
+# TIME-SERIES VISUALIZATION
 # --------------------------------------------------
-print("Demographic columns:", df_demo.columns)
-print("Pipeline executed successfully.")
-
+plt.figure()
 plt.plot(daily_enrol["date"], daily_enrol["total_enrolment"])
-plt.plot(biometric_trends["date"], biometric_trends["total_biometric_updates"])
+plt.title("Daily Aadhaar Enrolment Volume")
+plt.xlabel("Date")
+plt.ylabel("Total Enrolment")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
 
+plt.figure()
+plt.plot(biometric_trends["date"], biometric_trends["total_biometric_updates"])
+plt.title("Daily Aadhaar Biometric Updates")
+plt.xlabel("Date")
+plt.ylabel("Biometric Updates")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# --------------------------------------------------
+# ANOMALY VISUALIZATION (Z-score)
+# --------------------------------------------------
 mean = daily_enrol["total_enrolment"].mean()
 std = daily_enrol["total_enrolment"].std()
 
@@ -151,3 +137,49 @@ plt.xticks(rotation=45)
 plt.tight_layout()
 plt.show()
 
+# --------------------------------------------------
+# STATE-WISE AGGREGATION
+# --------------------------------------------------
+state_enrolment = (
+    df_enrol.groupby(state_col_enrol)["total_enrolment"]
+    .sum()
+    .reset_index()
+    .sort_values("total_enrolment", ascending=False)
+)
+
+state_population = (
+    df_demo.groupby(state_col_demo)["total_population"]
+    .sum()
+    .reset_index()
+)
+
+state_biometric = (
+    df_bio.groupby(state_col_bio)["total_biometric_updates"]
+    .sum()
+    .reset_index()
+)
+
+state_combined = (
+    state_enrolment
+    .merge(state_population, on=state_col_enrol)
+    .merge(state_biometric, on=state_col_enrol)
+)
+
+print("\nState-wise combined data:")
+print(state_combined.head())
+
+# --------------------------------------------------
+# STATE-WISE VISUALIZATION
+# --------------------------------------------------
+top_states = state_enrolment.head(10)
+
+plt.figure()
+plt.bar(top_states[state_col_enrol], top_states["total_enrolment"])
+plt.title("Top 10 States by Aadhaar Enrolment")
+plt.xlabel("State")
+plt.ylabel("Total Enrolment")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+print("\nPipeline executed successfully.")
