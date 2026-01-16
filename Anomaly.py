@@ -183,3 +183,24 @@ plt.tight_layout()
 plt.show()
 
 print("\nPipeline executed successfully.")
+
+# ----------------------------------------------
+# Demographic vs Biometric Update Comparison
+# ----------------------------------------------
+
+total_demographic_updates = df_demo["total_population"].sum()
+total_biometric_updates = df_bio["total_biometric_updates"].sum()
+
+print("Total Demographic Updates:", total_demographic_updates)
+print("Total Biometric Updates:", total_biometric_updates)
+
+update_types = ["Demographic Updates", "Biometric Updates"]
+update_counts = [total_demographic_updates, total_biometric_updates]
+
+plt.figure()
+plt.bar(update_types, update_counts)
+plt.xlabel("Update Type")
+plt.ylabel("Number of Requests")
+plt.title("Demographic vs Biometric Aadhaar Update Requests")
+plt.tight_layout()
+plt.show()
